@@ -69,10 +69,70 @@ function Section({ title, children }) {
   );
 }
 
-function NumberField({ label, value, onChange, suffix }) {
+function InfoTooltip({ text }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span
+      style={{ position: "relative", display: "inline-flex", marginLeft: 4 }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <span
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: 14,
+          height: 14,
+          borderRadius: "50%",
+          background: PALETTE.gridLight,
+          color: PALETTE.accentTeal,
+          fontSize: 10,
+          fontWeight: 700,
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          cursor: "pointer",
+          border: `1px solid ${PALETTE.accentTeal}`,
+          lineHeight: 1,
+        }}
+        aria-label="More info"
+      >
+        i
+      </span>
+      {open && (
+        <span
+          style={{
+            position: "absolute",
+            bottom: "140%",
+            left: "50%",
+            transform: "translateX(-50%)",
+            width: 220,
+            background: PALETTE.gridDark,
+            color: "#fff",
+            fontSize: 11.5,
+            fontWeight: 400,
+            lineHeight: 1.4,
+            padding: "8px 10px",
+            borderRadius: 6,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
+            zIndex: 10,
+            textTransform: "none",
+            letterSpacing: "normal",
+          }}
+        >
+          {text}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function NumberField({ label, value, onChange, suffix, tooltip }) {
   return (
     <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, color: PALETTE.gridDark }}>
-      <span style={{ opacity: 0.75 }}>{label}</span>
+      <span style={{ opacity: 0.75, display: "inline-flex", alignItems: "center" }}>
+        {label}
+        {tooltip && <InfoTooltip text={tooltip} />}
+      </span>
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <input
           type="number"
@@ -104,9 +164,18 @@ export default function VPACalculator() {
   const [oomBump, setOomBump] = useState(250);
 
   const [replicas, setReplicas] = useState(8);
+
+  // CPU-side quota / limit fields (millicores)
   const [quotaCpuVcores, setQuotaCpuVcores] = useState(32);
-  const [limitRangeMaxMilli, setLimitRangeMaxMilli] = useState(2000);
-  const [vpaMaxAllowedMilli, setVpaMaxAllowedMilli] = useState(2000);
+  const [limitRangeMaxMilliCpu, setLimitRangeMaxMilliCpu] = useState(2000);
+  const [vpaMaxAllowedMilliCpu, setVpaMaxAllowedMilliCpu] = useState(2000);
+
+  // Memory-side quota / limit fields (Mi)
+  const [quotaMemoryGi, setQuotaMemoryGi] = useState(64);
+  const [limitRangeMaxMi, setLimitRangeMaxMi] = useState(4096);
+  const [vpaMaxAllowedMi, setVpaMaxAllowedMi] = useState(4096);
+
+  const [resourceType, setResourceType] = useState("cpu"); // "cpu" | "memory", user can override
 
   const values = useMemo(
     () =>
@@ -125,15 +194,21 @@ export default function VPACalculator() {
   const histogramTarget = calc ? calc.target : 0;
   const oomAdjustedTarget = oomEnabled ? Math.max(histogramTarget, oomUsage + oomBump) : histogramTarget;
 
-  const isMemoryMode = presetKey === "C" || oomEnabled;
-  const unit = isMemoryMode ? "Mi" : "m";
+  const perPodValue = oomAdjustedTarget;
 
-  const perPodMilli = isMemoryMode ? null : oomAdjustedTarget;
-  const totalRequestMilli = perPodMilli != null ? perPodMilli * replicas : null;
-  const quotaMilli = quotaCpuVcores * 1000;
-  const fitsQuota = totalRequestMilli != null ? totalRequestMilli <= quotaMilli : null;
-  const fitsLimitRange = perPodMilli != null ? perPodMilli <= limitRangeMaxMilli : null;
-  const vpaCapsBelowLimitRange = vpaMaxAllowedMilli <= limitRangeMaxMilli;
+  // CPU fit math (millicores)
+  const totalRequestMilliCpu = perPodValue * replicas;
+  const quotaMilliCpu = quotaCpuVcores * 1000;
+  const fitsQuotaCpu = totalRequestMilliCpu <= quotaMilliCpu;
+  const fitsLimitRangeCpu = perPodValue <= limitRangeMaxMilliCpu;
+  const vpaCapsBelowLimitRangeCpu = vpaMaxAllowedMilliCpu <= limitRangeMaxMilliCpu;
+
+  // Memory fit math (Mi)
+  const totalRequestMi = perPodValue * replicas;
+  const quotaMi = quotaMemoryGi * 1024;
+  const fitsQuotaMemory = totalRequestMi <= quotaMi;
+  const fitsLimitRangeMemory = perPodValue <= limitRangeMaxMi;
+  const vpaCapsBelowLimitRangeMemory = vpaMaxAllowedMi <= limitRangeMaxMi;
 
   const maxVal = calc ? Math.max(...calc.items.map((i) => i.value)) : 1;
 
@@ -141,7 +216,9 @@ export default function VPACalculator() {
     setPresetKey(key);
     setRawValues(PRESETS[key].values.join(", "));
     setHalfLife(PRESETS[key].halfLife);
-    setOomEnabled(key === "C");
+    const oomOn = key === "C";
+    setOomEnabled(oomOn);
+    setResourceType(oomOn || key === "C" ? "memory" : "cpu");
   }
 
   return (
@@ -185,7 +262,9 @@ export default function VPACalculator() {
         </div>
 
         <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, marginBottom: 12 }}>
-          <span style={{ opacity: 0.75 }}>Samples, oldest to newest, comma separated ({unit === "Mi" ? "MiB" : "millicores"})</span>
+          <span style={{ opacity: 0.75 }}>
+            Samples, oldest to newest, comma separated ({resourceType === "cpu" ? "millicores" : "MiB"})
+          </span>
           <textarea
             value={rawValues}
             onChange={(e) => setRawValues(e.target.value)}
@@ -201,12 +280,19 @@ export default function VPACalculator() {
         </label>
 
         <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-          <NumberField label="Decay half-life" value={halfLife} onChange={setHalfLife} suffix="days" />
+          <NumberField
+            label="Decay half-life"
+            value={halfLife}
+            onChange={setHalfLife}
+            suffix="days"
+            tooltip="How fast older samples stop mattering. A 1-day half-life means a sample from yesterday counts half as much as one from today, and a sample from a week ago counts almost nothing. A longer half-life (like 7 days) keeps history relevant for longer."
+          />
           <NumberField
             label="Target percentile"
             value={percentile}
             onChange={(v) => setPercentile(Math.min(Math.max(v, 0), 1))}
             suffix="0 to 1"
+            tooltip="The recommendation aims to cover this fraction of observed usage. 0.9 means the recommended value is high enough to cover 90% of the weighted samples, with the top 10% (usually brief spikes) exceeding it."
           />
         </div>
       </Section>
@@ -244,14 +330,27 @@ export default function VPACalculator() {
 
       <Section title="3. Recommendation, with the OOM override">
         <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 14 }}>
-          <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12.5 }}>
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12.5 }}>
             <input type="checkbox" checked={oomEnabled} onChange={(e) => setOomEnabled(e.target.checked)} />
             Container was OOMKilled
+            <InfoTooltip text="Turn this on if the container was killed for using too much memory. When this happens, the recommender skips its usual math and jumps straight to a higher number, so the container has enough headroom not to die the same way again." />
           </label>
           {oomEnabled && (
             <>
-              <NumberField label="Usage at time of OOM" value={oomUsage} onChange={setOomUsage} suffix="Mi" />
-              <NumberField label="Fixed bump" value={oomBump} onChange={setOomBump} suffix="Mi" />
+              <NumberField
+                label="Usage at time of OOM"
+                value={oomUsage}
+                onChange={setOomUsage}
+                suffix={resourceType === "cpu" ? "m" : "Mi"}
+                tooltip="How much memory the container was actually using right when it got killed. Usually close to whatever its limit was set to."
+              />
+              <NumberField
+                label="Fixed bump"
+                value={oomBump}
+                onChange={setOomBump}
+                suffix={resourceType === "cpu" ? "m" : "Mi"}
+                tooltip="A flat amount of extra headroom added on top of the usage-at-OOM value, so the next attempt has more room to breathe. This is added directly, it does not come from the percentile calculation above."
+              />
             </>
           )}
         </div>
@@ -270,7 +369,7 @@ export default function VPACalculator() {
             <div style={{ fontSize: 11, opacity: 0.65 }}>Histogram target</div>
             <div style={{ fontSize: 22, fontWeight: 700, fontFamily: "ui-monospace, Menlo, monospace" }}>
               {histogramTarget}
-              {unit}
+              {resourceType === "cpu" ? "m" : "Mi"}
             </div>
           </div>
           {oomEnabled && (
@@ -285,55 +384,150 @@ export default function VPACalculator() {
                 }}
               >
                 {oomAdjustedTarget}
-                {unit}
+                {resourceType === "cpu" ? "m" : "Mi"}
               </div>
             </div>
           )}
         </div>
       </Section>
 
-      {!isMemoryMode && (
-        <Section title="4. Does it fit the resource hierarchy? (CPU, millicores)">
-          <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 14 }}>
-            <NumberField label="Replicas" value={replicas} onChange={setReplicas} />
-            <NumberField label="Namespace CPU quota" value={quotaCpuVcores} onChange={setQuotaCpuVcores} suffix="vCPU" />
-            <NumberField
-              label="LimitRange max per container"
-              value={limitRangeMaxMilli}
-              onChange={setLimitRangeMaxMilli}
-              suffix="m"
-            />
-            <NumberField
-              label="VPA maxAllowed"
-              value={vpaMaxAllowedMilli}
-              onChange={setVpaMaxAllowedMilli}
-              suffix="m"
-            />
-          </div>
+      <Section title="4. Does it fit the resource hierarchy?">
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+          {["cpu", "memory"].map((rt) => (
+            <button
+              key={rt}
+              onClick={() => setResourceType(rt)}
+              style={{
+                padding: "6px 14px",
+                borderRadius: 7,
+                border: `1px solid ${resourceType === rt ? PALETTE.primary : PALETTE.gridLight}`,
+                background: resourceType === rt ? PALETTE.primary : "#fff",
+                color: resourceType === rt ? "#fff" : PALETTE.gridDark,
+                fontSize: 12.5,
+                cursor: "pointer",
+                textTransform: "capitalize",
+              }}
+            >
+              {rt}
+            </button>
+          ))}
+          <InfoTooltip text="Choose which resource the recommendation above is for, so the checks below compare it against the right quota and LimitRange (CPU quotas are set in whole vCPUs, memory quotas in Gi)." />
+          <span style={{ fontSize: 11.5, opacity: 0.55, marginLeft: 4 }}>
+            checking against the recommendation above ({perPodValue}
+            {resourceType === "cpu" ? "m" : "Mi"})
+          </span>
+        </div>
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
-            <div>
-              Per-pod recommendation: <strong>{perPodMilli}m</strong> &nbsp;×&nbsp; {replicas} replicas =
-              <strong> {totalRequestMilli}m</strong> total request (namespace quota is {quotaMilli}m)
+        {resourceType === "cpu" ? (
+          <>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 14 }}>
+              <NumberField
+                label="Replicas"
+                value={replicas}
+                onChange={setReplicas}
+                tooltip="How many copies of this pod are running. Every replica gets the same per-pod recommendation, so this multiplies straight into the total request below."
+              />
+              <NumberField
+                label="Namespace CPU quota"
+                value={quotaCpuVcores}
+                onChange={setQuotaCpuVcores}
+                suffix="vCPU"
+                tooltip="The total CPU this namespace is allowed to request across every pod combined, set by a ResourceQuota. Run: kubectl describe resourcequota -n <namespace>"
+              />
+              <NumberField
+                label="LimitRange max per container"
+                value={limitRangeMaxMilliCpu}
+                onChange={setLimitRangeMaxMilliCpu}
+                suffix="m"
+                tooltip="The single highest CPU value any one container in this namespace is allowed to request or be limited to, set by a LimitRange. Run: kubectl describe limitrange -n <namespace>"
+              />
+              <NumberField
+                label="VPA maxAllowed"
+                value={vpaMaxAllowedMilliCpu}
+                onChange={setVpaMaxAllowedMilliCpu}
+                suffix="m"
+                tooltip="A ceiling you set directly on the VPA object itself (resourcePolicy.containerPolicies[].maxAllowed), so VPA never proposes more than this, regardless of what the histogram calculates."
+              />
             </div>
-            <StatusLine
-              ok={fitsQuota}
-              okText={`Fits inside the namespace CPU quota.`}
-              badText={`Exceeds the namespace CPU quota by ${totalRequestMilli - quotaMilli}m. Some pods will resize successfully and the rest will stay deferred until quota increases or replica count drops.`}
-            />
-            <StatusLine
-              ok={fitsLimitRange}
-              okText={`Per-pod value is within the LimitRange max (${limitRangeMaxMilli}m).`}
-              badText={`Per-pod value (${perPodMilli}m) exceeds the LimitRange max (${limitRangeMaxMilli}m). The admission controller will reject this patch outright, regardless of quota.`}
-            />
-            <StatusLine
-              ok={vpaCapsBelowLimitRange}
-              okText={`VPA's own maxAllowed (${vpaMaxAllowedMilli}m) is at or below the LimitRange max, so VPA will never even propose a value that gets rejected.`}
-              badText={`VPA's maxAllowed (${vpaMaxAllowedMilli}m) is above the LimitRange max (${limitRangeMaxMilli}m). VPA can keep proposing values the cluster will keep rejecting, with no obvious error in kubectl describe pod.`}
-            />
-          </div>
-        </Section>
-      )}
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
+              <div>
+                Per-pod recommendation: <strong>{perPodValue}m</strong> &nbsp;×&nbsp; {replicas} replicas =
+                <strong> {totalRequestMilliCpu}m</strong> total request (namespace quota is {quotaMilliCpu}m)
+              </div>
+              <StatusLine
+                ok={fitsQuotaCpu}
+                okText={`Fits inside the namespace CPU quota.`}
+                badText={`Exceeds the namespace CPU quota by ${totalRequestMilliCpu - quotaMilliCpu}m. Some pods will resize successfully and the rest will stay deferred until quota increases or replica count drops.`}
+              />
+              <StatusLine
+                ok={fitsLimitRangeCpu}
+                okText={`Per-pod value is within the LimitRange max (${limitRangeMaxMilliCpu}m).`}
+                badText={`Per-pod value (${perPodValue}m) exceeds the LimitRange max (${limitRangeMaxMilliCpu}m). The admission controller will reject this patch outright, regardless of quota.`}
+              />
+              <StatusLine
+                ok={vpaCapsBelowLimitRangeCpu}
+                okText={`VPA's own maxAllowed (${vpaMaxAllowedMilliCpu}m) is at or below the LimitRange max, so VPA will never even propose a value that gets rejected.`}
+                badText={`VPA's maxAllowed (${vpaMaxAllowedMilliCpu}m) is above the LimitRange max (${limitRangeMaxMilliCpu}m). VPA can keep proposing values the cluster will keep rejecting, with no obvious error in kubectl describe pod.`}
+              />
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 14 }}>
+              <NumberField
+                label="Replicas"
+                value={replicas}
+                onChange={setReplicas}
+                tooltip="How many copies of this pod are running. Every replica gets the same per-pod recommendation, so this multiplies straight into the total request below."
+              />
+              <NumberField
+                label="Namespace memory quota"
+                value={quotaMemoryGi}
+                onChange={setQuotaMemoryGi}
+                suffix="Gi"
+                tooltip="The total memory this namespace is allowed to request across every pod combined, set by a ResourceQuota. Run: kubectl describe resourcequota -n <namespace>"
+              />
+              <NumberField
+                label="LimitRange max per container"
+                value={limitRangeMaxMi}
+                onChange={setLimitRangeMaxMi}
+                suffix="Mi"
+                tooltip="The single highest memory value any one container in this namespace is allowed to request or be limited to, set by a LimitRange. Run: kubectl describe limitrange -n <namespace>"
+              />
+              <NumberField
+                label="VPA maxAllowed"
+                value={vpaMaxAllowedMi}
+                onChange={setVpaMaxAllowedMi}
+                suffix="Mi"
+                tooltip="A ceiling you set directly on the VPA object itself (resourcePolicy.containerPolicies[].maxAllowed), so VPA never proposes more than this, regardless of what the histogram calculates."
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
+              <div>
+                Per-pod recommendation: <strong>{perPodValue}Mi</strong> &nbsp;×&nbsp; {replicas} replicas =
+                <strong> {totalRequestMi}Mi</strong> total request (namespace quota is {quotaMi}Mi)
+              </div>
+              <StatusLine
+                ok={fitsQuotaMemory}
+                okText={`Fits inside the namespace memory quota.`}
+                badText={`Exceeds the namespace memory quota by ${totalRequestMi - quotaMi}Mi. Some pods will resize successfully and the rest will stay deferred until quota increases or replica count drops.`}
+              />
+              <StatusLine
+                ok={fitsLimitRangeMemory}
+                okText={`Per-pod value is within the LimitRange max (${limitRangeMaxMi}Mi).`}
+                badText={`Per-pod value (${perPodValue}Mi) exceeds the LimitRange max (${limitRangeMaxMi}Mi). The admission controller will reject this patch outright, regardless of quota. This is exactly the situation an OOM bump can trigger if the bump isn't checked against LimitRange.`}
+              />
+              <StatusLine
+                ok={vpaCapsBelowLimitRangeMemory}
+                okText={`VPA's own maxAllowed (${vpaMaxAllowedMi}Mi) is at or below the LimitRange max, so VPA will never even propose a value that gets rejected.`}
+                badText={`VPA's maxAllowed (${vpaMaxAllowedMi}Mi) is above the LimitRange max (${limitRangeMaxMi}Mi). VPA can keep proposing values the cluster will keep rejecting, with no obvious error in kubectl describe pod.`}
+              />
+            </div>
+          </>
+        )}
+      </Section>
 
       <div style={{ fontSize: 11.5, opacity: 0.55, marginTop: 8, borderTop: `1px solid ${PALETTE.gridLight}`, paddingTop: 14 }}>
         Model: weight = 0.5^(age_in_days / half_life). Target percentile found by walking the value-sorted
