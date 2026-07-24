@@ -1,16 +1,45 @@
-# React + Vite
+# VPA Recommendation Calculator
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Live tool:** [https://prasad-m-k.github.io/vpa-calc/](https://prasad-m-k.github.io/vpa-calc/)
 
-Currently, two official plugins are available:
+An interactive calculator that reproduces the Vertical Pod Autoscaler's decay-weighted percentile math, the OOM bump override, and whether a recommendation actually fits your namespace's ResourceQuota and LimitRange, for both CPU and memory.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Built as a companion to two blog posts:
 
-## React Compiler
+1. *What the VPA Recommender Is Actually Computing (And Why It Disagrees With You)*
+2. *Getting Real Numbers Into the VPA Model: The Commands and Tools*
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## What it does
 
-## Expanding the ESLint configuration
+- Walks through three sample datasets (a one-off spike, a recurring pattern, and a clean history before an OOM event) with plain-language explanations for each
+- Computes the decay-weighted histogram and target percentile by hand, showing every intermediate weight so the math is checkable, not a black box
+- Applies the OOM override on top of the histogram target, the same way VPA's real recommender does
+- Checks the resulting recommendation against a namespace CPU or memory quota, a LimitRange max, and VPA's own `maxAllowed`, including memory or CPU already used by other pods in the same quota pool
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## Running locally
+
+```bash
+npm install
+npm run dev
+```
+
+## Deploying
+
+```bash
+npm run build
+npm run deploy
+```
+
+This builds the app and pushes the output to the `gh-pages` branch, which GitHub Pages serves automatically from `https://prasad-m-k.github.io/vpa-calc/`.
+
+## License
+
+MIT. See [LICENSE](./LICENSE).
+
+## Disclaimer
+This is an independent, personal open-source project, developed entirely on my own time using my own equipment. It is not affiliated with, endorsed by, or built using any resources, tools, or confidential information belonging to any current or past employer. All opinions expressed are my own.
+
+## Author
+
+**Prasad MK** (Kameswara Prasad Mukkamala)
+[github.com/prasad-m-k](https://github.com/prasad-m-k)

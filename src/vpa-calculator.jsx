@@ -1,4 +1,60 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+
+// Free, no-signup hit counter. Namespace/key pair below acts as the unique
+// counter ID; change either string if you ever want to reset the count.
+const COUNTAPI_NAMESPACE = "prasad-m-k-vpa-calc";
+const COUNTAPI_KEY = "views";
+
+function useViewCounter() {
+  const [count, setCount] = useState(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    // Avoid double-counting on React StrictMode's dev double-invoke.
+    const alreadyHitThisSession = sessionStorage.getItem("vpa-calc-hit");
+    const url = alreadyHitThisSession
+      ? `https://api.countapi.xyz/get/${COUNTAPI_NAMESPACE}/${COUNTAPI_KEY}`
+      : `https://api.countapi.xyz/hit/${COUNTAPI_NAMESPACE}/${COUNTAPI_KEY}`;
+
+    fetch(url)
+      .then((r) => r.json())
+      .then((data) => {
+        if (typeof data.value === "number") {
+          setCount(data.value);
+          sessionStorage.setItem("vpa-calc-hit", "1");
+        } else {
+          setFailed(true);
+        }
+      })
+      .catch(() => setFailed(true));
+  }, []);
+
+  return { count, failed };
+}
+
+function ViewCounter({ palette }) {
+  const { count, failed } = useViewCounter();
+  if (failed) return null; // fail silently, never block the tool itself
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 20,
+        right: 24,
+        fontSize: 11.5,
+        color: palette.accentTeal,
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        fontFamily: "ui-monospace, Menlo, monospace",
+      }}
+      title="Page views since launch"
+    >
+      <span aria-hidden="true">◎</span>
+      <span>{count === null ? "…" : count.toLocaleString()} views</span>
+    </div>
+  );
+}
 
 const PALETTE = {
   primary: "#1F4E5B",
@@ -10,17 +66,23 @@ const PALETTE = {
 
 const PRESETS = {
   A: {
-    label: "Dataset A — steady service, one-off spike",
+    label: "Dataset A: steady service, one-off spike",
+    description:
+      "A normal, steady workload that had one unusual day (a deploy that briefly spiked CPU). Shows how the decay math treats a one-time event: the spike barely moves the recommendation because it's already fading in importance by the time you're looking at it.",
     values: [110, 105, 120, 115, 108, 112, 300, 118, 122, 119],
     halfLife: 1,
   },
   B: {
-    label: "Dataset B — recurring nightly batch",
+    label: "Dataset B: recurring nightly batch",
+    description:
+      "The same shape as Dataset A, but the 'spike' happens every single day, like a nightly batch job. Because it keeps recurring, it never gets the chance to fade away, so the recommendation ends up sized for the batch job, not the quiet hours in between.",
     values: [95, 600, 92, 600, 88, 600, 91, 600, 90, 600],
     halfLife: 1,
   },
   C: {
-    label: "Dataset C — clean history before OOM",
+    label: "Dataset C: clean history before OOM",
+    description:
+      "A calm, boring memory history right up until the container got OOMKilled. Turn on the OOM checkbox below to see how the recommendation jumps directly to a safer number, skipping the usual percentile math entirely.",
     values: [200, 210, 205, 215, 220, 208, 212, 225, 218, 230],
     halfLife: 7,
   },
@@ -167,11 +229,13 @@ export default function VPACalculator() {
 
   // CPU-side quota / limit fields (millicores)
   const [quotaCpuVcores, setQuotaCpuVcores] = useState(32);
+  const [usedCpuMilli, setUsedCpuMilli] = useState(0);
   const [limitRangeMaxMilliCpu, setLimitRangeMaxMilliCpu] = useState(2000);
   const [vpaMaxAllowedMilliCpu, setVpaMaxAllowedMilliCpu] = useState(2000);
 
   // Memory-side quota / limit fields (Mi)
   const [quotaMemoryGi, setQuotaMemoryGi] = useState(64);
+  const [usedMemoryMi, setUsedMemoryMi] = useState(0);
   const [limitRangeMaxMi, setLimitRangeMaxMi] = useState(4096);
   const [vpaMaxAllowedMi, setVpaMaxAllowedMi] = useState(4096);
 
@@ -197,14 +261,16 @@ export default function VPACalculator() {
   const perPodValue = oomAdjustedTarget;
 
   // CPU fit math (millicores)
-  const totalRequestMilliCpu = perPodValue * replicas;
+  const newRequestMilliCpu = perPodValue * replicas;
+  const totalRequestMilliCpu = usedCpuMilli + newRequestMilliCpu;
   const quotaMilliCpu = quotaCpuVcores * 1000;
   const fitsQuotaCpu = totalRequestMilliCpu <= quotaMilliCpu;
   const fitsLimitRangeCpu = perPodValue <= limitRangeMaxMilliCpu;
   const vpaCapsBelowLimitRangeCpu = vpaMaxAllowedMilliCpu <= limitRangeMaxMilliCpu;
 
   // Memory fit math (Mi)
-  const totalRequestMi = perPodValue * replicas;
+  const newRequestMi = perPodValue * replicas;
+  const totalRequestMi = usedMemoryMi + newRequestMi;
   const quotaMi = quotaMemoryGi * 1024;
   const fitsQuotaMemory = totalRequestMi <= quotaMi;
   const fitsLimitRangeMemory = perPodValue <= limitRangeMaxMi;
@@ -230,14 +296,51 @@ export default function VPACalculator() {
         maxWidth: 980,
         margin: "0 auto",
         padding: "28px 24px 40px",
+        position: "relative",
       }}
     >
+      <ViewCounter palette={PALETTE} />
+
       <div style={{ marginBottom: 22 }}>
         <div style={{ fontSize: 20, fontWeight: 700 }}>VPA Recommendation Calculator</div>
         <div style={{ fontSize: 13, opacity: 0.65, marginTop: 4 }}>
           Decay-weighted percentile math, the OOM bump, and whether the result actually fits your quota and
           LimitRange. Same model described in the blog post, worked interactively.
         </div>
+      </div>
+
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          alignItems: "center",
+          marginBottom: 24,
+          padding: "10px 14px",
+          background: PALETTE.gridLight,
+          borderRadius: 8,
+        }}
+      >
+        <span style={{ fontSize: 12.5, fontWeight: 600, marginRight: 4 }}>Resource type:</span>
+        {["cpu", "memory"].map((rt) => (
+          <button
+            key={rt}
+            onClick={() => setResourceType(rt)}
+            style={{
+              padding: "6px 16px",
+              borderRadius: 7,
+              border: `1px solid ${resourceType === rt ? PALETTE.primary : PALETTE.accentTeal}`,
+              background: resourceType === rt ? PALETTE.primary : "#fff",
+              color: resourceType === rt ? "#fff" : PALETTE.gridDark,
+              fontSize: 12.5,
+              fontWeight: 600,
+              cursor: "pointer",
+              textTransform: "capitalize",
+            }}
+          >
+            {rt}
+          </button>
+        ))}
+        <InfoTooltip text="Sets the unit used throughout the whole tool, millicores for CPU or MiB for memory, and determines which quota and LimitRange fields show up in step 4." />
       </div>
 
       <Section title="1. Choose or edit a sample dataset">
@@ -260,6 +363,23 @@ export default function VPACalculator() {
             </button>
           ))}
         </div>
+
+        {PRESETS[presetKey] && (
+          <div
+            style={{
+              fontSize: 12.5,
+              lineHeight: 1.5,
+              color: PALETTE.gridDark,
+              background: PALETTE.gridLight,
+              borderLeft: `3px solid ${PALETTE.accentTeal}`,
+              padding: "10px 12px",
+              borderRadius: 6,
+              marginBottom: 14,
+            }}
+          >
+            {PRESETS[presetKey].description}
+          </div>
+        )}
 
         <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 12, marginBottom: 12 }}>
           <span style={{ opacity: 0.75 }}>
@@ -392,30 +512,10 @@ export default function VPACalculator() {
       </Section>
 
       <Section title="4. Does it fit the resource hierarchy?">
-        <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
-          {["cpu", "memory"].map((rt) => (
-            <button
-              key={rt}
-              onClick={() => setResourceType(rt)}
-              style={{
-                padding: "6px 14px",
-                borderRadius: 7,
-                border: `1px solid ${resourceType === rt ? PALETTE.primary : PALETTE.gridLight}`,
-                background: resourceType === rt ? PALETTE.primary : "#fff",
-                color: resourceType === rt ? "#fff" : PALETTE.gridDark,
-                fontSize: 12.5,
-                cursor: "pointer",
-                textTransform: "capitalize",
-              }}
-            >
-              {rt}
-            </button>
-          ))}
-          <InfoTooltip text="Choose which resource the recommendation above is for, so the checks below compare it against the right quota and LimitRange (CPU quotas are set in whole vCPUs, memory quotas in Gi)." />
-          <span style={{ fontSize: 11.5, opacity: 0.55, marginLeft: 4 }}>
-            checking against the recommendation above ({perPodValue}
-            {resourceType === "cpu" ? "m" : "Mi"})
-          </span>
+        <div style={{ fontSize: 11.5, opacity: 0.55, marginBottom: 16 }}>
+          Checking against the {resourceType === "cpu" ? "CPU" : "memory"} recommendation from step 3 (
+          {perPodValue}
+          {resourceType === "cpu" ? "m" : "Mi"}). Change the resource type at the top of the page if needed.
         </div>
 
         {resourceType === "cpu" ? (
@@ -435,6 +535,13 @@ export default function VPACalculator() {
                 tooltip="The total CPU this namespace is allowed to request across every pod combined, set by a ResourceQuota. Run: kubectl describe resourcequota -n <namespace>"
               />
               <NumberField
+                label="Already used by other pods"
+                value={usedCpuMilli}
+                onChange={setUsedCpuMilli}
+                suffix="m"
+                tooltip="How much of this quota is already consumed by pods that aren't part of this calculation, before your new or resized pods are counted. Check the 'Used' column in: kubectl describe resourcequota -n <namespace>"
+              />
+              <NumberField
                 label="LimitRange max per container"
                 value={limitRangeMaxMilliCpu}
                 onChange={setLimitRangeMaxMilliCpu}
@@ -452,13 +559,14 @@ export default function VPACalculator() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
               <div>
-                Per-pod recommendation: <strong>{perPodValue}m</strong> &nbsp;×&nbsp; {replicas} replicas =
-                <strong> {totalRequestMilliCpu}m</strong> total request (namespace quota is {quotaMilliCpu}m)
+                Per-pod recommendation: <strong>{perPodValue}m</strong> × {replicas} replicas =
+                <strong> {newRequestMilliCpu}m</strong> new request, plus <strong>{usedCpuMilli}m</strong> already
+                used = <strong>{totalRequestMilliCpu}m</strong> total (namespace quota is {quotaMilliCpu}m)
               </div>
               <StatusLine
                 ok={fitsQuotaCpu}
-                okText={`Fits inside the namespace CPU quota.`}
-                badText={`Exceeds the namespace CPU quota by ${totalRequestMilliCpu - quotaMilliCpu}m. Some pods will resize successfully and the rest will stay deferred until quota increases or replica count drops.`}
+                okText={`Fits inside the namespace CPU quota, with ${quotaMilliCpu - totalRequestMilliCpu}m to spare.`}
+                badText={`Exceeds the namespace CPU quota by ${totalRequestMilliCpu - quotaMilliCpu}m once existing usage is counted. Some pods will resize successfully and the rest will stay deferred until quota increases, other usage drops, or replica count drops.`}
               />
               <StatusLine
                 ok={fitsLimitRangeCpu}
@@ -489,6 +597,13 @@ export default function VPACalculator() {
                 tooltip="The total memory this namespace is allowed to request across every pod combined, set by a ResourceQuota. Run: kubectl describe resourcequota -n <namespace>"
               />
               <NumberField
+                label="Already used by other pods"
+                value={usedMemoryMi}
+                onChange={setUsedMemoryMi}
+                suffix="Mi"
+                tooltip="How much of this quota is already consumed by pods that aren't part of this calculation, before your new or resized pods are counted. Check the 'Used' column in: kubectl describe resourcequota -n <namespace>. This is often the missing piece when a deployment fails quota even though a single pod's request looks small."
+              />
+              <NumberField
                 label="LimitRange max per container"
                 value={limitRangeMaxMi}
                 onChange={setLimitRangeMaxMi}
@@ -506,13 +621,14 @@ export default function VPACalculator() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: 13 }}>
               <div>
-                Per-pod recommendation: <strong>{perPodValue}Mi</strong> &nbsp;×&nbsp; {replicas} replicas =
-                <strong> {totalRequestMi}Mi</strong> total request (namespace quota is {quotaMi}Mi)
+                Per-pod recommendation: <strong>{perPodValue}Mi</strong> × {replicas} replicas =
+                <strong> {newRequestMi}Mi</strong> new request, plus <strong>{usedMemoryMi}Mi</strong> already used
+                = <strong>{totalRequestMi}Mi</strong> total (namespace quota is {quotaMi}Mi)
               </div>
               <StatusLine
                 ok={fitsQuotaMemory}
-                okText={`Fits inside the namespace memory quota.`}
-                badText={`Exceeds the namespace memory quota by ${totalRequestMi - quotaMi}Mi. Some pods will resize successfully and the rest will stay deferred until quota increases or replica count drops.`}
+                okText={`Fits inside the namespace memory quota, with ${quotaMi - totalRequestMi}Mi to spare.`}
+                badText={`Exceeds the namespace memory quota by ${totalRequestMi - quotaMi}Mi once existing usage is counted. Some pods will resize successfully and the rest will stay deferred until quota increases, other usage drops, or replica count drops.`}
               />
               <StatusLine
                 ok={fitsLimitRangeMemory}
@@ -534,6 +650,37 @@ export default function VPACalculator() {
         histogram until cumulative weight crosses percentile × total weight. This mirrors VPA's real recommender
         logic at a level a person can check by hand; the production implementation uses finer-grained decayed
         histogram buckets rather than raw per-sample weights.
+      </div>
+
+      <div
+        style={{
+          fontSize: 11,
+          opacity: 0.5,
+          marginTop: 20,
+          paddingTop: 14,
+          borderTop: `1px solid ${PALETTE.gridLight}`,
+          textAlign: "center",
+          lineHeight: 1.6,
+        }}
+      >
+        Built by{" "}
+        <a
+          href="https://github.com/prasad-m-k"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: PALETTE.accentTeal, textDecoration: "none" }}
+        >
+          Prasad MK
+        </a>{" "}
+        · independent, personal open-source project, not affiliated with or endorsed by any employer ·{" "}
+        <a
+          href="https://github.com/prasad-m-k/vpa-calc"
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: PALETTE.accentTeal, textDecoration: "none" }}
+        >
+          source on GitHub
+        </a>
       </div>
     </div>
   );
