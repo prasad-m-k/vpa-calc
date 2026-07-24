@@ -4,10 +4,12 @@
 
 An interactive calculator that reproduces the Vertical Pod Autoscaler's decay-weighted percentile math, the OOM bump override, and whether a recommendation actually fits your namespace's ResourceQuota and LimitRange, for both CPU and memory.
 
+<!--
 Built as a companion to two blog posts:
 
 1. *What the VPA Recommender Is Actually Computing (And Why It Disagrees With You)*
 2. *Getting Real Numbers Into the VPA Model: The Commands and Tools*
+-->
 
 ## What it does
 
